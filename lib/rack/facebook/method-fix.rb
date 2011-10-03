@@ -11,14 +11,20 @@ module Rack
         unless env_excluded?(env)
           if env["REQUEST_METHOD"] == "POST"
             request = Request.new(env)
-            if @settings[:secret_id] && request.params["signed_request"]
-              env["REQUEST_METHOD"] = "GET" if signed_request_valid?(@settings[:secret_id], request)
-            else
-              env["REQUEST_METHOD"] = "GET" if request.params["signed_request"]
+            if request.params["signed_request"]
+              if @settings[:secret_id].nil? || signed_request_valid?(@settings[:secret_id], request)
+                env["REQUEST_METHOD"] = "GET"
+                env["facebook.signed_request"] = decoded_json(request.params["signed_request"])
+              end
             end
           end
         end
         @app.call(env)
+      end
+
+      def decoded_json(signed_request)
+        signature, payload = signed_request.split(".", 2)
+        parsed_json_for_encoded_payload payload if payload
       end
 
       # Code adapted from https://github.com/nsanta/fbgraph
@@ -31,7 +37,7 @@ module Rack
           signature << "%02x" % byte
         end
 
-        data = JSON.parse(url_decode_64(payload))
+        data = parsed_json_for_encoded_payload(payload)
         if data["algorithm"].to_s.upcase != "HMAC-SHA256"
           valid = false
         end
@@ -44,16 +50,20 @@ module Rack
         valid
       end
 
+      protected
+
       def url_decode_64(string)
         encoded_string = string.gsub("-", "+").gsub("_", "/")
         encoded_string += "=" while !(encoded_string.size % 4).zero?
         Base64.decode64(encoded_string)
       end
 
-      protected
-
       def env_excluded?(env)
         @settings[:exclude] && @settings[:exclude].call(env)
+      end
+
+      def parsed_json_for_encoded_payload(payload)
+        JSON.parse(url_decode_64(payload))
       end
 
     end
